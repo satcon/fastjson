@@ -115,6 +115,12 @@ public final class SerializeWriter extends Writer {
     public void config(SerializerFeature feature, boolean state) {
         if (state) {
             features |= feature.getMask();
+            //由于枚举序列化特性WriteEnumUsingToString和WriteEnumUsingName不能共存，需要检查
+            if(feature == SerializerFeature.WriteEnumUsingToString){
+                features &= ~SerializerFeature.WriteEnumUsingName.getMask();
+            }else if(feature == SerializerFeature.WriteEnumUsingName){
+                features &= ~SerializerFeature.WriteEnumUsingToString.getMask();
+            }
         } else {
             features &= ~feature.getMask();
         }
@@ -499,23 +505,32 @@ public final class SerializeWriter extends Writer {
             return;
         }
 
-        if (isEnabled(SerializerFeature.WriteEnumUsingToString)) {
-            if (isEnabled(SerializerFeature.UseSingleQuotes)) {
-                write('\'');
-                write(value.name());
-                write('\'');
-                write(c);
+        if (isEnabled(SerializerFeature.WriteEnumUsingName)) {
+            writeEnumValue(value.name(),c);
+            return;
+        }
 
-            } else {
-                write('\"');
-                write(value.name());
-                write('\"');
-                write(c);
-            }
+        if (isEnabled(SerializerFeature.WriteEnumUsingToString)) {
+            writeEnumValue(value.toString(),c);
             return;
         }
 
         writeIntAndChar(value.ordinal(), c);
+    }
+
+    private void writeEnumValue(String value,char c){
+        if (isEnabled(SerializerFeature.UseSingleQuotes)) {
+            write('\'');
+            write(value);
+            write('\'');
+            write(c);
+
+        } else {
+            write('\"');
+            write(value);
+            write('\"');
+            write(c);
+        }
     }
 
     public void writeIntAndChar(int i, char c) {
@@ -627,7 +642,18 @@ public final class SerializeWriter extends Writer {
                 for (int i = 0; i < text.length(); ++i) {
                     char ch = text.charAt(i);
 
-                    if (isEnabled(SerializerFeature.BrowserCompatible)) {
+                    if (isEnabled(SerializerFeature.BrowserSecure)) {
+                        if (!(ch >= '0' && ch <= '9') && !(ch >= 'a' && ch <= 'z') && !(ch >= 'A' && ch <= 'Z')
+                            && !(ch == ',') && !(ch == '.') && !(ch == '_')) {
+                            write('\\');
+                            write('u');
+                            write(IOUtils.DIGITS[(ch >>> 12) & 15]);
+                            write(IOUtils.DIGITS[(ch >>> 8) & 15]);
+                            write(IOUtils.DIGITS[(ch >>> 4) & 15]);
+                            write(IOUtils.DIGITS[ch & 15]);
+                            continue;
+                        }
+                    } else if (isEnabled(SerializerFeature.BrowserCompatible)) {
                         if (ch == '\b' //
                             || ch == '\f' //
                             || ch == '\n' //
@@ -665,7 +691,15 @@ public final class SerializeWriter extends Writer {
                             && IOUtils.specicalFlags_doubleQuotes[ch] != 0 //
                             || (ch == '/' && isEnabled(SerializerFeature.WriteSlashAsSpecial))) {
                             write('\\');
-                            write(replaceChars[(int) ch]);
+                            if (IOUtils.specicalFlags_doubleQuotes[ch] == 4) {
+                                write('u');
+                                write(IOUtils.DIGITS[ch >>> 12 & 15]);
+                                write(IOUtils.DIGITS[ch >>> 8 & 15]);
+                                write(IOUtils.DIGITS[ch >>> 4 & 15]);
+                                write(IOUtils.DIGITS[ch & 15]);
+                            } else {
+                                write(IOUtils.replaceChars[ch]);
+                            }
                             continue;
                         }
                     }
@@ -690,6 +724,51 @@ public final class SerializeWriter extends Writer {
 
         count = newcount;
 
+        if (isEnabled(SerializerFeature.BrowserSecure)) {
+            int lastSpecialIndex = -1;
+
+            for (int i = start; i < end; ++i) {
+                char ch = buf[i];
+
+                if (!(ch >= '0' && ch <= '9') && !(ch >= 'a' && ch <= 'z') && !(ch >= 'A' && ch <= 'Z')
+                        && !(ch == ',') && !(ch == '.') && !(ch == '_')) {
+                    lastSpecialIndex = i;
+                    newcount += 5;
+                    continue;
+                }
+            }
+
+            if (newcount > buf.length) {
+                expandCapacity(newcount);
+            }
+            count = newcount;
+
+            for (int i = lastSpecialIndex; i >= start; --i) {
+                char ch = buf[i];
+
+                if (!(ch >= '0' && ch <= '9') && !(ch >= 'a' && ch <= 'z') && !(ch >= 'A' && ch <= 'Z') && !(ch == ',')
+                    && !(ch == '.') && !(ch == '_')) {
+                    System.arraycopy(buf, i + 1, buf, i + 6, end - i - 1);
+                    buf[i] = '\\';
+                    buf[i + 1] = 'u';
+                    buf[i + 2] = IOUtils.DIGITS[(ch >>> 12) & 15];
+                    buf[i + 3] = IOUtils.DIGITS[(ch >>> 8) & 15];
+                    buf[i + 4] = IOUtils.DIGITS[(ch >>> 4) & 15];
+                    buf[i + 5] = IOUtils.DIGITS[ch & 15];
+                    end += 5;
+                }
+            }
+
+            if (seperator != 0) {
+                buf[count - 2] = '\"';
+                buf[count - 1] = seperator;
+            } else {
+                buf[count - 1] = '\"';
+            }
+
+            return;
+        }
+        
         if (isEnabled(SerializerFeature.BrowserCompatible)) {
             int lastSpecialIndex = -1;
 
@@ -1177,7 +1256,11 @@ public final class SerializeWriter extends Writer {
                     writeString(value);
                 }
             } else {
-                if (isEnabled(SerializerFeature.BrowserCompatible)) {
+                if (isEnabled(SerializerFeature.BrowserSecure)) {
+                    write(seperator);
+                    writeStringWithDoubleQuote(name, ':');
+                    writeStringWithDoubleQuote(value, (char) 0);
+                } else if (isEnabled(SerializerFeature.BrowserCompatible)) {
                     write(seperator);
                     writeStringWithDoubleQuote(name, ':');
                     writeStringWithDoubleQuote(value, (char) 0);
@@ -1423,17 +1506,20 @@ public final class SerializeWriter extends Writer {
             return;
         }
 
-        if (isEnabled(SerializerFeature.WriteEnumUsingToString)) {
-            if (isEnabled(SerializerFeature.UseSingleQuotes)) {
-                writeFieldValue(seperator, name, value.name());
-            } else {
-                writeFieldValueStringWithDoubleQuote(seperator, name, value.name(), false);
-                return;
-            }
-
-            // writeStringWithDoubleQuote
+        if (isEnabled(SerializerFeature.WriteEnumUsingName)) {
+            writeEnumFieldValue(seperator,name,value.name());
+        }else if(isEnabled(SerializerFeature.WriteEnumUsingToString)){
+            writeEnumFieldValue(seperator,name,value.toString());
         } else {
             writeFieldValue(seperator, name, value.ordinal());
+        }
+    }
+
+    private void writeEnumFieldValue(char seperator,String name,String value){
+        if (isEnabled(SerializerFeature.UseSingleQuotes)) {
+            writeFieldValue(seperator, name, value);
+        } else {
+            writeFieldValueStringWithDoubleQuote(seperator, name, value, false);
         }
     }
 

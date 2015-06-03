@@ -29,9 +29,13 @@ public enum SerializerFeature {
      */
     WriteMapNullValue,
     /**
-     * 
+     * 用枚举toString()值输出
      */
     WriteEnumUsingToString,
+    /**
+     * 用枚举name()输出
+     */
+    WriteEnumUsingName,
     /**
      * 
      */
@@ -117,7 +121,12 @@ public enum SerializerFeature {
     /**
      * @since 1.1.42
      */
-    NotWriteDefaultValue
+    NotWriteDefaultValue,
+    
+    /**
+     * @since 1.2.6
+     */
+    BrowserSecure,
     ;
 
     private SerializerFeature(){
